@@ -68,18 +68,52 @@ async def make_voice(text, output_file):
             handle.write("file '" + segment.resolve().as_posix() + "'\n")
     run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_file), "-c", "copy", str(output_file)])
 
+
 def download_video(url, dest):
-    with requests.get(url, stream=True, timeout=(30, 180), headers={"User-Agent":"Mozilla/5.0"}) as r:
-        r.raise_for_status()
-        total = 0
-        with open(dest, "wb") as f:
-            for chunk in r.iter_content(1024 * 1024):
-                if chunk:
-                    f.write(chunk); total += len(chunk)
-                    if total > 900 * 1024 * 1024:
-                        raise RuntimeError("Footage file exceeded 900 MB safety cap.")
-    if os.path.getsize(dest) < 100_000:
-        raise RuntimeError("Downloaded footage is unexpectedly small.")
+    import time
+
+    for attempt in range(5):
+        try:
+            with requests.get(
+                url,
+                stream=True,
+                timeout=(30, 180),
+                headers={"User-Agent": "Mozilla/5.0"}
+            ) as r:
+                if r.status_code == 429:
+                    wait = 30 * (attempt + 1)
+                    print(f"Pixabay rate limit. Waiting {wait} seconds...")
+                    time.sleep(wait)
+                    continue
+
+                r.raise_for_status()
+                total = 0
+
+                with open(dest, "wb") as f:
+                    for chunk in r.iter_content(1024 * 1024):
+                        if chunk:
+                            f.write(chunk)
+                            total += len(chunk)
+
+                            if total > 900 * 1024 * 1024:
+                                raise RuntimeError(
+                                    "Footage file exceeded 900 MB safety cap."
+                                )
+
+            if os.path.getsize(dest) < 100_000:
+                raise RuntimeError(
+                    "Downloaded footage is unexpectedly small."
+                )
+
+            return
+
+        except requests.RequestException:
+            if attempt == 4:
+                raise
+            time.sleep(15 * (attempt + 1))
+
+    raise RuntimeError("Video download failed after 5 attempts.")
+
 
 def get_duration(path):
     out = subprocess.check_output([
